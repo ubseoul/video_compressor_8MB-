@@ -8,7 +8,9 @@
 <style>
   body { font-family: Arial, sans-serif; max-width: 800px; margin: auto; padding: 20px; }
   h1 { text-align: center; }
-  .uploader { border: 2px dashed #ccc; padding: 20px; text-align: center; cursor: pointer; }
+  .uploader { border: 2px dashed #ccc; padding: 20px; text-align: center; cursor: pointer; border-radius: 10px; background:#fafbff }
+  .uploader.drag { border-color:#4a67ff; background:#eef2ff }
+  .btn { display:inline-block; padding:8px 14px; border-radius:8px; background:#1e2958; color:#fff; border:1px solid #3a4686; cursor:pointer; margin-top:8px; }
   #output { margin-top: 20px; }
   .faq { margin-top: 40px; }
   input[type=file] { display: none; }
@@ -18,7 +20,12 @@
 <body>
 <h1>Compress Video to 8MB for Discord (Offline)</h1>
 <p>This free tool compresses videos to under 8MB for Discord sharing — all in your browser. No uploads, no server processing, complete privacy.</p>
-<div class="uploader" id="uploader">Drop your video here or click to select<input type="file" id="fileInput" accept="video/*"></div>
+<div class="uploader" id="uploader">
+  <div><strong>Drop your video here</strong> or</div>
+  <label for="fileInput" class="btn">Browse</label>
+  <input type="file" id="fileInput" accept="video/*">
+  <div style="color:#667; font-size:.9rem; margin-top:6px">MP4/MOV/WebM. Files never leave your device.</div>
+</div>
 <div id="output"></div>
 <!-- AdSense slot -->
 <ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-xxxxxxxxxxxxxxxx" data-ad-slot="1234567890" data-ad-format="auto"></ins>
@@ -56,6 +63,10 @@
 <!-- FFmpeg library must be loaded before our script -->
 <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.4/dist/ffmpeg.min.js"></script>
 <script>
+// Ensure native DnD doesn't navigate away
+window.addEventListener('dragover', e=>{ e.preventDefault(); });
+window.addEventListener('drop', e=>{ if(!e.target.closest || !e.target.closest('#uploader')) e.preventDefault(); });
+
 const { createFFmpeg, fetchFile } = FFmpeg;
 const ff = createFFmpeg({
   log: true,
@@ -65,46 +76,38 @@ const ff = createFFmpeg({
 const uploader = document.getElementById('uploader');
 const fileInput = document.getElementById('fileInput');
 
-uploader.addEventListener('click', () => fileInput.click());
+function safe(fn){ try{ fn(); }catch(e){ console.error(e); } }
 
-uploader.addEventListener('dragover', e => {
-  e.preventDefault();
-  uploader.style.borderColor = '#00f';
-});
+safe(()=> uploader.addEventListener('click', (ev)=>{
+  // allow label to handle; fallback to input.click()
+  if(ev.target.tagName !== 'LABEL') fileInput.click();
+}));
 
-uploader.addEventListener('dragleave', e => {
-  uploader.style.borderColor = '#ccc';
-});
+safe(()=> uploader.addEventListener('dragenter', e=>{ e.preventDefault(); uploader.classList.add('drag'); }));
+safe(()=> uploader.addEventListener('dragover', e=>{ e.preventDefault(); uploader.classList.add('drag'); }));
+safe(()=> uploader.addEventListener('dragleave', e=>{ uploader.classList.remove('drag'); }));
+safe(()=> uploader.addEventListener('drop', async e=>{
+  e.preventDefault(); uploader.classList.remove('drag');
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if(f) await handleFile(f);
+}));
 
-uploader.addEventListener('drop', async e => {
-  e.preventDefault();
-  uploader.style.borderColor = '#ccc';
-  if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-    await handleFile(e.dataTransfer.files[0]);
-  }
-});
+safe(()=> fileInput.addEventListener('change', async e=>{
+  const f = e.target.files && e.target.files[0];
+  if(f) await handleFile(f);
+}));
 
-fileInput.addEventListener('change', async e => {
-  if (e.target.files && e.target.files[0]) {
-    await handleFile(e.target.files[0]);
-  }
-});
-
-async function handleFile(file) {
-  if (!file) return;
-  document.getElementById('output').innerText = 'Loading FFmpeg...';
-  if (!ff.isLoaded()) {
-    await ff.load();
-  }
-  document.getElementById('output').innerText = 'Compressing...';
-
+async function handleFile(file){
+  const out = document.getElementById('output');
+  out.textContent = 'Loading FFmpeg…';
+  if(!ff.isLoaded()) await ff.load();
+  out.textContent = 'Compressing…';
   ff.FS('writeFile', file.name, await fetchFile(file));
   const outputName = 'output.mp4';
   await ff.run('-i', file.name, '-vcodec', 'libx264', '-crf', '28', '-preset', 'fast', '-acodec', 'aac', '-b:a', '128k', outputName);
-
   const data = ff.FS('readFile', outputName);
-  const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
-  document.getElementById('output').innerHTML = `<a href="${url}" download="${outputName}">Download Compressed Video</a>`;
+  const url = URL.createObjectURL(new Blob([data.buffer], { type:'video/mp4' }));
+  out.innerHTML = `<div><a class="btn" href="${url}" download="${outputName}">Download Compressed Video</a></div>`;
 }
 </script>
 </body>

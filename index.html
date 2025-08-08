@@ -11,19 +11,15 @@
   .uploader { border: 2px dashed #ccc; padding: 20px; text-align: center; cursor: pointer; }
   #output { margin-top: 20px; }
   .faq { margin-top: 40px; }
+  input[type=file] { display: none; }
 </style>
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
-<script>
-  (adsbygoogle = window.adsbygoogle || []).push({});
-</script>
 </head>
 <body>
 <h1>Compress Video to 8MB for Discord (Offline)</h1>
 <p>This free tool compresses videos to under 8MB for Discord sharing — all in your browser. No uploads, no server processing, complete privacy.</p>
-<div class="uploader" id="uploader">
-  Drop your video here or click to select
-  <input id="fileInput" type="file" accept="video/*" hidden>
-</div><div id="output"></div>
+<div class="uploader" id="uploader">Drop your video here or click to select<input type="file" id="fileInput" accept="video/*"></div>
+<div id="output"></div>
 <!-- AdSense slot -->
 <ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-xxxxxxxxxxxxxxxx" data-ad-slot="1234567890" data-ad-format="auto"></ins>
 <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
@@ -38,7 +34,6 @@
 <h3>What formats are supported?</h3>
 <p>MP4, MOV, WebM, and more — if your browser can decode it, we can compress it.</p>
 </div>
-<!-- SEO content -->
 <section>
 <h2>Free Discord Video Compressor – 8MB Limit</h2>
 <p>Need to share a video on Discord but keep hitting the 8MB limit? Our free Discord video compressor lets you shrink any clip to fit under the size cap. Works on Windows, Mac, Linux, Android, and iOS directly in your browser.</p>
@@ -58,72 +53,59 @@
 <li>Download your optimized file and send it on Discord.</li>
 </ol>
 </section>
+<!-- FFmpeg library must be loaded before our script -->
+<script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.4/dist/ffmpeg.min.js"></script>
 <script>
-  // Avoid name collisions with any global `ffmpeg` by using `ff` for our instance.
-  const { createFFmpeg, fetchFile } = FFmpeg;
-  const ff = createFFmpeg({
-    log: true,
-    // IMPORTANT: explicit core path so it loads on GitHub Pages/CDN
-    corePath: 'https://unpkg.com/@ffmpeg/core@0.12.4/dist/ffmpeg-core.js'
-  });
+const { createFFmpeg, fetchFile } = FFmpeg;
+const ff = createFFmpeg({
+  log: true,
+  corePath: 'https://unpkg.com/@ffmpeg/core@0.12.4/dist/ffmpeg-core.js'
+});
 
-  const uploader = document.getElementById('uploader');
-  const fileInput = document.getElementById('fileInput');
-  const output = document.getElementById('output');
+const uploader = document.getElementById('uploader');
+const fileInput = document.getElementById('fileInput');
 
-  uploader.addEventListener('click', () => fileInput.click());
+uploader.addEventListener('click', () => fileInput.click());
 
-  uploader.addEventListener('dragover', e => {
-    e.preventDefault();
-    uploader.style.borderColor = '#00f';
-  });
+uploader.addEventListener('dragover', e => {
+  e.preventDefault();
+  uploader.style.borderColor = '#00f';
+});
 
-  uploader.addEventListener('dragleave', () => {
-    uploader.style.borderColor = '#ccc';
-  });
+uploader.addEventListener('dragleave', e => {
+  uploader.style.borderColor = '#ccc';
+});
 
-  uploader.addEventListener('drop', async e => {
-    e.preventDefault();
-    uploader.style.borderColor = '#ccc';
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      await handleFile(e.dataTransfer.files[0]);
-    }
-  });
-
-  fileInput.addEventListener('change', async e => {
-    if (e.target.files && e.target.files[0]) {
-      await handleFile(e.target.files[0]);
-    }
-  });
-
-  async function handleFile(file) {
-    output.textContent = 'Loading FFmpeg…';
-    if (!ff.isLoaded()) {
-      await ff.load();
-    }
-    output.textContent = 'Compressing…';
-
-    // write input
-    ff.FS('writeFile', file.name, await fetchFile(file));
-
-    const outputName = 'output.mp4';
-    // simple encode; we can add size targeting later
-    await ff.run(
-      '-i', file.name,
-      '-vcodec', 'libx264',
-      '-crf', '28',
-      '-preset', 'fast',
-      '-acodec', 'aac',
-      '-b:a', '128k',
-      outputName
-    );
-
-    // read and offer download
-    const data = ff.FS('readFile', outputName);
-    const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
-    output.innerHTML = `<a href="${url}" download="${outputName}">Download Compressed Video</a>`;
+uploader.addEventListener('drop', async e => {
+  e.preventDefault();
+  uploader.style.borderColor = '#ccc';
+  if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+    await handleFile(e.dataTransfer.files[0]);
   }
-</script>
+});
 
+fileInput.addEventListener('change', async e => {
+  if (e.target.files && e.target.files[0]) {
+    await handleFile(e.target.files[0]);
+  }
+});
+
+async function handleFile(file) {
+  if (!file) return;
+  document.getElementById('output').innerText = 'Loading FFmpeg...';
+  if (!ff.isLoaded()) {
+    await ff.load();
+  }
+  document.getElementById('output').innerText = 'Compressing...';
+
+  ff.FS('writeFile', file.name, await fetchFile(file));
+  const outputName = 'output.mp4';
+  await ff.run('-i', file.name, '-vcodec', 'libx264', '-crf', '28', '-preset', 'fast', '-acodec', 'aac', '-b:a', '128k', outputName);
+
+  const data = ff.FS('readFile', outputName);
+  const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+  document.getElementById('output').innerHTML = `<a href="${url}" download="${outputName}">Download Compressed Video</a>`;
+}
+</script>
 </body>
 </html>

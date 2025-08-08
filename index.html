@@ -59,191 +59,71 @@
 </ol>
 </section>
 <script>
-  // --- Basic working uploader + compressor (client-side only) ---
-  const $ = s => document.querySelector(s);
-  const uploader = $('#uploader');
-  const fileInput = $('#fileInput');
-  const output = $('#output');
-
-  let srcFile = null, srcBytes = null, srcDuration = 0, lastBlob = null;
-
-  // Click to open file dialog
-  uploader.addEventListener('click', ()=> fileInput.click());
-  fileInput.addEventListener('change', e=>{
-    const f = e.target.files && e.target.files[0];
-    if (f) handleFile(f);
-  });
-
-  // Drag & drop
-  ['dragenter','dragover'].forEach(ev => uploader.addEventListener(ev, e=>{
-    e.preventDefault(); uploader.style.background = '#f6f8ff';
-  }));
-  ['dragleave','drop'].forEach(ev => uploader.addEventListener(ev, e=>{
-    e.preventDefault(); uploader.style.background = '';
-  }));
-  uploader.addEventListener('drop', e=>{
-    const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) handleFile(f);
-  });
-
-  function fmtBytes(n){
-    if (n < 1024) return n+' B';
-    if (n < 1048576) return (n/1024).toFixed(1)+' KB';
-    return (n/1048576).toFixed(2)+' MB';
-  }
-
-  async function handleFile(file){
-    srcFile = file;
-    srcBytes = new Uint8Array(await file.arrayBuffer());
-    srcDuration = await getDuration(new Blob([srcBytes], {type:file.type || 'video/mp4'}));
-    lastBlob = null;
-
-    output.innerHTML = `
-      <div style="border:1px solid #ddd;border-radius:10px;padding:12px">
-        <div><b>Selected:</b> ${file.name} · ${fmtBytes(file.size)} · ${srcDuration ? srcDuration.toFixed(2)+'s' : 'unknown'}</div>
-        <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <label>Target size
-            <select id="targetSize">
-              <option value="8">8 MB (Discord)</option>
-              <option value="25">25 MB</option>
-              <option value="50">50 MB</option>
-              <option value="100">100 MB</option>
-            </select>
-          </label>
-          <label>Max resolution
-            <select id="maxRes">
-              <option value="auto">Auto</option>
-              <option value="1080">1080p</option>
-              <option value="720" selected>720p</option>
-              <option value="480">480p</option>
-              <option value="360">360p</option>
-            </select>
-          </label>
-          <label>Trim start (s)
-            <input id="trimStart" type="number" min="0" step="0.1" placeholder="0">
-          </label>
-          <label>Trim end (s)
-            <input id="trimEnd" type="number" min="0" step="0.1" placeholder="leave blank">
-          </label>
-          <label style="grid-column: span 2; display:flex; align-items:center; gap:8px">
-            <input id="mute" type="checkbox"> Mute audio
-          </label>
-        </div>
-        <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap">
-          <button id="startBtn">Compress</button>
-          <button id="dlBtn" disabled>Download</button>
-          <span id="status">Status: idle</span>
-        </div>
-        <progress id="prog" value="0" max="1" style="width:100%;height:14px;margin-top:10px;display:none"></progress>
-        <pre id="log" style="display:none;background:#0c1127;color:#b9c3ff;border-radius:8px;padding:8px;max-height:180px;overflow:auto"></pre>
-      </div>`;
-
-    $('#startBtn').addEventListener('click', startCompress);
-    $('#dlBtn').addEventListener('click', downloadOut);
-  }
-
-  function getDuration(blob){
-    return new Promise(res=>{
-      const v = document.createElement('video'); v.preload='metadata';
-      v.onloadedmetadata = ()=>{ const d=v.duration; URL.revokeObjectURL(v.src); res(isFinite(d)? d : 0); };
-      v.onerror = ()=>{ URL.revokeObjectURL(v.src); res(0); };
-      v.src = URL.createObjectURL(blob);
-    });
-  }
-
-  function setStatus(t){ const s=$('#status'); if(s) s.textContent='Status: '+t; }
-  function logLine(t){ const l=$('#log'); if(!l) return; l.style.display='block'; l.textContent += t+'\\n'; l.scrollTop=l.scrollHeight; }
-
-  // FFmpeg setup
-  const { createFFmpeg } = FFmpeg;
-  const ffmpeg = createFFmpeg({
-    log: false,
+  // Avoid name collisions with any global `ffmpeg` by using `ff` for our instance.
+  const { createFFmpeg, fetchFile } = FFmpeg;
+  const ff = createFFmpeg({
+    log: true,
+    // IMPORTANT: explicit core path so it loads on GitHub Pages/CDN
     corePath: 'https://unpkg.com/@ffmpeg/core@0.12.4/dist/ffmpeg-core.js'
   });
 
-  async function startCompress(){
-    try{
-      setStatus('Loading FFmpeg…');
-      const prog = $('#prog'); prog.style.display='block'; prog.value=0;
-      if(!ffmpeg.isLoaded()){
-        ffmpeg.setProgress(({ratio})=>{ prog.value = Math.max(0, Math.min(1, ratio || 0)); });
-        await ffmpeg.load();
-      }
+  const uploader = document.getElementById('uploader');
+  const fileInput = document.getElementById('fileInput');
+  const output = document.getElementById('output');
 
-      setStatus('Preparing…');
-      const inExt = (srcFile?.name.split('.').pop() || 'mp4').toLowerCase();
-      const inName = 'input.'+inExt;
-      const outName = 'out.mp4';
-      try{ ffmpeg.FS('unlink', inName); }catch(_){}
-      try{ ffmpeg.FS('unlink', outName); }catch(_){}
-      ffmpeg.FS('writeFile', inName, srcBytes);
+  uploader.addEventListener('click', () => fileInput.click());
 
-      const targetMB = parseInt($('#targetSize').value,10) || 8;
-      const targetBytes = targetMB * 1024 * 1024;
-      const trimStart = parseFloat($('#trimStart').value || '0') || 0;
-      const trimEnd = parseFloat($('#trimEnd').value || '0') || 0;
-      const mute = $('#mute').checked;
-      const maxRes = $('#maxRes').value;
+  uploader.addEventListener('dragover', e => {
+    e.preventDefault();
+    uploader.style.borderColor = '#00f';
+  });
 
-      const estDur = Math.max(0.5, (srcDuration || 0) - trimStart - (trimEnd>0 ? Math.max(0, (srcDuration||0) - trimEnd) : 0));
-      const audioK = mute ? 0 : 96; // kbps
-      const overhead = 0.92; // container headroom
-      let vbK = Math.max(100, Math.floor(((targetBytes*8)/estDur)/1000 - audioK) * overhead);
+  uploader.addEventListener('dragleave', () => {
+    uploader.style.borderColor = '#ccc';
+  });
 
-      // scaling
-      let vf = [];
-      if(maxRes !== 'auto'){
-        const h = parseInt(maxRes,10);
-        vf = ['-vf', `scale='min(iw,round(ih*(${h}/ih)))':${h}:force_original_aspect_ratio=decrease`];
-      }
-
-      const base = [
-        ...(trimStart>0? ['-ss', String(trimStart)] : []),
-        ...(trimEnd>0? ['-to', String(trimEnd)] : []),
-        '-i', inName,
-        '-c:v','libx264','-preset','veryfast','-pix_fmt','yuv420p','-movflags','+faststart',
-        ...vf,
-        ...(mute ? ['-an'] : ['-c:a','aac','-b:a', audioK+'k'])
-      ];
-
-      // 1st pass
-      let args = [...base, '-b:v', vbK+'k', '-maxrate', vbK+'k', '-bufsize', Math.round(vbK/2)+'k', outName];
-      setStatus(`Encoding (~${vbK} kbps)…`);
-      await ffmpeg.run(...args);
-      let data = ffmpeg.FS('readFile', outName);
-
-      // If overshoot, refine once
-      if(data.length > targetBytes){
-        const ratio = targetBytes / data.length;
-        vbK = Math.max(100, Math.floor(vbK * ratio * 0.9));
-        setStatus(`Refining size (~${vbK} kbps)…`);
-        try{ ffmpeg.FS('unlink', outName); }catch(_){}
-        args = [...base, '-b:v', vbK+'k', '-maxrate', vbK+'k', '-bufsize', Math.round(vbK/2)+'k', outName];
-        await ffmpeg.run(...args);
-        data = ffmpeg.FS('readFile', outName);
-      }
-
-      lastBlob = new Blob([data.buffer], {type:'video/mp4'});
-      const finalMB = (data.length/1048576).toFixed(2);
-      setStatus(`Done: ${finalMB} MB${data.length <= targetBytes ? ' ✓' : ' (slightly over)'}`);
-      $('#dlBtn').disabled = false;
-      prog.style.display='none';
-    }catch(err){
-      console.error(err);
-      logLine(String(err));
-      setStatus('Error');
-      $('#prog').style.display='none';
+  uploader.addEventListener('drop', async e => {
+    e.preventDefault();
+    uploader.style.borderColor = '#ccc';
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      await handleFile(e.dataTransfer.files[0]);
     }
-  }
+  });
 
-  function downloadOut(){
-    if(!lastBlob) return;
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(lastBlob);
-    a.download = (srcFile?.name.replace(/\\.[^.]+$/, '') || 'video') + `-discord-${$('#targetSize').value}MB.mp4`;
-    a.click();
-    setTimeout(()=> URL.revokeObjectURL(a.href), 1500);
+  fileInput.addEventListener('change', async e => {
+    if (e.target.files && e.target.files[0]) {
+      await handleFile(e.target.files[0]);
+    }
+  });
+
+  async function handleFile(file) {
+    output.textContent = 'Loading FFmpeg…';
+    if (!ff.isLoaded()) {
+      await ff.load();
+    }
+    output.textContent = 'Compressing…';
+
+    // write input
+    ff.FS('writeFile', file.name, await fetchFile(file));
+
+    const outputName = 'output.mp4';
+    // simple encode; we can add size targeting later
+    await ff.run(
+      '-i', file.name,
+      '-vcodec', 'libx264',
+      '-crf', '28',
+      '-preset', 'fast',
+      '-acodec', 'aac',
+      '-b:a', '128k',
+      outputName
+    );
+
+    // read and offer download
+    const data = ff.FS('readFile', outputName);
+    const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+    output.innerHTML = `<a href="${url}" download="${outputName}">Download Compressed Video</a>`;
   }
 </script>
+
 </body>
 </html>
